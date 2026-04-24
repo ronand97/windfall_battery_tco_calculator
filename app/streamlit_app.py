@@ -595,11 +595,54 @@ def main() -> None:  # noqa: C901 — UI orchestration is linear but necessarily
         if has_actual:
             # Three-way comparison: current (billed) vs baseline (selected tariff
             # without battery) vs with-battery (selected tariff + battery).
-            st.markdown("### Annual cost comparison")
+            # Raw period totals — as they happened over the uploaded dataset,
+            # no scaling applied.
+            period_days = result.simulated_days
+            actual_period_gbp = (result.total_actual_current_cost_pence or 0.0) / 100.0
+            baseline_period_gbp = result.total_baseline_cost_pence / 100.0
+            with_batt_period_gbp = result.total_with_battery_cost_pence / 100.0
+            tariff_switch_period_gbp = actual_period_gbp - baseline_period_gbp
+            battery_only_period_gbp = baseline_period_gbp - with_batt_period_gbp
+            total_period_gbp = actual_period_gbp - with_batt_period_gbp
+
+            # Annualized versions — scaled to 365 days for apples-to-apples
+            # year-over-year planning.
             actual_gbp = (summary.actual_current_annualized_cost_pence or 0.0) / 100.0
             baseline_gbp = summary.baseline_annualized_cost_pence / 100.0
             with_batt_gbp = summary.with_battery_annualized_cost_pence / 100.0
+            tariff_switch_gbp = (
+                summary.tariff_switch_annualized_savings_pence or 0.0
+            ) / 100.0
+            battery_only_gbp = summary.annualized_savings_pence / 100.0
+            total_gbp = (summary.total_vs_current_annualized_savings_pence or 0.0) / 100.0
 
+            # --- Simulated period (raw totals) ---
+            st.markdown(f"### Cost comparison — over {period_days} simulated day(s)")
+            pc1, pc2, pc3 = st.columns(3)
+            pc1.metric("Current tariff (actual)", f"£{actual_period_gbp:,.2f}")
+            pc2.metric(
+                f"{current_tariff.name} — no battery",
+                f"£{baseline_period_gbp:,.2f}",
+                delta=f"£{actual_period_gbp - baseline_period_gbp:,.2f} vs current",
+                delta_color="normal",
+            )
+            pc3.metric(
+                f"{current_tariff.name} — with battery",
+                f"£{with_batt_period_gbp:,.2f}",
+                delta=f"£{actual_period_gbp - with_batt_period_gbp:,.2f} vs current",
+                delta_color="normal",
+            )
+
+            st.markdown(f"### Savings breakdown — over {period_days} simulated day(s)")
+            ps1, ps2, ps3 = st.columns(3)
+            ps1.metric("Tariff switch alone", f"£{tariff_switch_period_gbp:,.2f}")
+            ps2.metric("Battery on new tariff", f"£{battery_only_period_gbp:,.2f}")
+            ps3.metric("Total (switch + battery)", f"£{total_period_gbp:,.2f}")
+
+            st.divider()
+
+            # --- Annualised (scaled to 365 days) ---
+            st.markdown("### Cost comparison — annualised (scaled to 365 days)")
             cc1, cc2, cc3 = st.columns(3)
             cc1.metric("Current tariff (actual)", f"£{actual_gbp:,.2f}")
             cc2.metric(
@@ -615,13 +658,7 @@ def main() -> None:  # noqa: C901 — UI orchestration is linear but necessarily
                 delta_color="normal",
             )
 
-            st.markdown("### Annual savings breakdown")
-            tariff_switch_gbp = (
-                summary.tariff_switch_annualized_savings_pence or 0.0
-            ) / 100.0
-            battery_only_gbp = summary.annualized_savings_pence / 100.0
-            total_gbp = (summary.total_vs_current_annualized_savings_pence or 0.0) / 100.0
-
+            st.markdown("### Savings breakdown — annualised (scaled to 365 days)")
             s1, s2, s3, s4 = st.columns(4)
             s1.metric("Tariff switch alone", f"£{tariff_switch_gbp:,.2f}")
             s2.metric("Battery on new tariff", f"£{battery_only_gbp:,.2f}")
@@ -630,8 +667,8 @@ def main() -> None:  # noqa: C901 — UI orchestration is linear but necessarily
 
             st.caption(
                 "*Current tariff cost is read directly from the uploaded CSV's "
-                "'Estimated Cost Inc. Tax (p)' column. Savings scaled to 12 months "
-                f"from {summary.simulated_days} simulated day(s).*"
+                "'Estimated Cost Inc. Tax (p)' column. Annualised figures scale "
+                f"the {period_days}-day totals by 365/{period_days}.*"
             )
         else:
             # Manual-profile path (no billing data) — keep the original three cards.
