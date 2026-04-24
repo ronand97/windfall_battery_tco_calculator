@@ -158,6 +158,10 @@ class HalfHourReading(BaseModel):
     model_config = ConfigDict(frozen=True)
     start: time
     kwh: float = Field(ge=0)
+    # Actual cost paid under the user's *current* tariff for this half-hour slot.
+    # Populated by the Octopus CSV parser from the "Estimated Cost Inc. Tax (p)"
+    # column; None for manually-entered profiles (where no billing data exists).
+    current_cost_pence: float | None = Field(default=None, ge=0)
 
 
 class DailyConsumption(BaseModel):
@@ -234,6 +238,11 @@ class SimResult(BaseModel):
     total_with_battery_cost_pence: float
     simulated_days: int
     annualized_savings_pence: float
+    # Total cost under the user's *current* tariff (from billing data, e.g. the
+    # Octopus CSV cost column). None if any slot lacks this data (e.g. manual
+    # profile). When present, enables the "current vs modeled vs with-battery"
+    # three-way comparison in the UI.
+    total_actual_current_cost_pence: float | None = None
 
 
 # -------- Economics summary --------
@@ -245,3 +254,8 @@ class SavingsSummary(BaseModel):
     annualized_savings_pence: float
     baseline_annualized_cost_pence: float
     with_battery_annualized_cost_pence: float
+    # Actual-cost comparison fields. Non-None only when the underlying SimResult
+    # carried current-tariff cost data (Octopus CSV upload path).
+    actual_current_annualized_cost_pence: float | None = None
+    tariff_switch_annualized_savings_pence: float | None = None
+    total_vs_current_annualized_savings_pence: float | None = None

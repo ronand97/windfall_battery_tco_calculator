@@ -47,6 +47,11 @@ def run(
     total_savings_pence = 0.0
     total_baseline_cost_pence = 0.0
     total_with_battery_cost_pence = 0.0
+    # Aggregate the user's actual current-tariff cost from billing data on the
+    # series. `None` means "unavailable for at least one slot" — if ANY reading
+    # lacks cost data we treat the whole total as unavailable, since a partial
+    # sum would be misleading when compared against the full-period modeled costs.
+    actual_cost_pence: float | None = 0.0
 
     for day in series.days:
         step_results = []
@@ -65,6 +70,11 @@ def run(
             step_results.append(sr)
             day_cost_pence += sr.cost_pence
             day_baseline_pence += reading.kwh * price
+            if actual_cost_pence is not None:
+                if reading.current_cost_pence is None:
+                    actual_cost_pence = None
+                else:
+                    actual_cost_pence += reading.current_cost_pence
 
         day_savings_pence = day_baseline_pence - day_cost_pence
         day_results.append(
@@ -89,4 +99,5 @@ def run(
         total_with_battery_cost_pence=total_with_battery_cost_pence,
         simulated_days=simulated_days,
         annualized_savings_pence=annualized_savings_pence,
+        total_actual_current_cost_pence=actual_cost_pence,
     )

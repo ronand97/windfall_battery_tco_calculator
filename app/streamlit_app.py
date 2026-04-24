@@ -552,18 +552,75 @@ def main() -> None:  # noqa: C901 — UI orchestration is linear but necessarily
         st.info("Configure inputs in the sidebar, then click **Run simulation**.")
     else:
         summary = savings_summary(result)
-        annual_savings_gbp = summary.annualized_savings_pence / 100.0
-        daily_avg_gbp = summary.daily_average_savings_pence / 100.0
-        payback = simple_payback_years(
-            ss.get("sim_battery_cost_gbp", 2000.0),
-            summary.annualized_savings_pence,
-        )
+        battery_cost_gbp = ss.get("sim_battery_cost_gbp", 2000.0)
+
+        has_actual = summary.actual_current_annualized_cost_pence is not None
+
+        # Payback is computed against whichever savings figure best reflects "what
+        # the user actually saves by buying this battery". When we have the user's
+        # real current-tariff cost, that's the full switch+battery delta vs doing
+        # nothing; otherwise fall back to the battery-only modeled savings.
+        payback_basis_pence: float
+        if has_actual:
+            payback_basis_pence = summary.total_vs_current_annualized_savings_pence or 0.0
+        else:
+            payback_basis_pence = summary.annualized_savings_pence
+        payback = simple_payback_years(battery_cost_gbp, payback_basis_pence)
         payback_str = "Never (no savings)" if payback is None else f"{payback:.1f} years"
 
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Annual savings", f"£{annual_savings_gbp:,.2f}")
-        c2.metric("Daily avg savings", f"£{daily_avg_gbp:,.2f}")
-        c3.metric("Simple payback", payback_str)
+        if has_actual:
+            # Three-way comparison: current (billed) vs baseline (selected tariff
+            # without battery) vs with-battery (selected tariff + battery).
+            st.markdown("### Annual cost comparison")
+            actual_gbp = (summary.actual_current_annualized_cost_pence or 0.0) / 100.0
+            baseline_gbp = summary.baseline_annualized_cost_pence / 100.0
+            with_batt_gbp = summary.with_battery_annualized_cost_pence / 100.0
+
+            cc1, cc2, cc3 = st.columns(3)
+            cc1.metric("Current tariff (actual)", f"£{actual_gbp:,.2f}")
+            cc2.metric(
+                f"{current_tariff.name} — no battery",
+                f"£{baseline_gbp:,.2f}",
+                delta=f"£{actual_gbp - baseline_gbp:,.2f} vs current",
+                delta_color="normal",
+            )
+            cc3.metric(
+                f"{current_tariff.name} — with battery",
+                f"£{with_batt_gbp:,.2f}",
+                delta=f"£{actual_gbp - with_batt_gbp:,.2f} vs current",
+                delta_color="normal",
+            )
+
+            st.markdown("### Annual savings breakdown")
+            tariff_switch_gbp = (
+                summary.tariff_switch_annualized_savings_pence or 0.0
+            ) / 100.0
+            battery_only_gbp = summary.annualized_savings_pence / 100.0
+            total_gbp = (summary.total_vs_current_annualized_savings_pence or 0.0) / 100.0
+
+            s1, s2, s3, s4 = st.columns(4)
+            s1.metric("Tariff switch alone", f"£{tariff_switch_gbp:,.2f}")
+            s2.metric("Battery on new tariff", f"£{battery_only_gbp:,.2f}")
+            s3.metric("Total (switch + battery)", f"£{total_gbp:,.2f}")
+            s4.metric("Simple payback", payback_str)
+
+            st.caption(
+                "*Current tariff cost is read directly from the uploaded CSV's "
+                "'Estimated Cost Inc. Tax (p)' column. Savings scaled to 12 months "
+                f"from {summary.simulated_days} simulated day(s).*"
+            )
+        else:
+            # Manual-profile path (no billing data) — keep the original three cards.
+            annual_savings_gbp = summary.annualized_savings_pence / 100.0
+            daily_avg_gbp = summary.daily_average_savings_pence / 100.0
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Annual savings (battery only)", f"£{annual_savings_gbp:,.2f}")
+            c2.metric("Daily avg savings", f"£{daily_avg_gbp:,.2f}")
+            c3.metric("Simple payback", payback_str)
+            st.caption(
+                "*Upload an Octopus CSV to see your actual current-tariff cost "
+                "compared to the selected tariff with and without the battery.*"
+            )
 
         st.plotly_chart(
             build_spaghetti_fig(result, current_tariff),

@@ -27,6 +27,41 @@ def test_normal_day_loads_one_day_with_48_readings():
     assert day.readings[-1].start == time(23, 30)
 
 
+def test_cost_column_populates_current_cost_pence():
+    """CSVs with 'Estimated Cost Inc. Tax (p)' populate HalfHourReading.current_cost_pence."""
+    result = load_octopus_csv(FIXTURES / "normal_day.csv")
+    day = result.series.days[0]
+    # Every slot in the fixture has a numeric cost value.
+    for reading in day.readings:
+        assert reading.current_cost_pence is not None
+        assert reading.current_cost_pence >= 0
+    # First-slot sanity check against the raw fixture value.
+    assert day.readings[0].current_cost_pence == pytest.approx(6.424612425)
+
+
+def test_missing_cost_column_leaves_current_cost_none(tmp_path: Path):
+    """CSVs without the cost column parse fine with current_cost_pence=None."""
+    csv = tmp_path / "no_cost.csv"
+    lines = ["Consumption (kwh), Start, End"]
+    for i in range(48):
+        hh, mm = divmod(i * 30, 60)
+        next_hh, next_mm = divmod((i + 1) * 30, 60)
+        if next_hh == 24:
+            end = "2026-04-02T00:00:00+01:00"
+        else:
+            end = f"2026-04-01T{next_hh:02d}:{next_mm:02d}:00+01:00"
+        lines.append(
+            f"0.100000, 2026-04-01T{hh:02d}:{mm:02d}:00+01:00, {end}"
+        )
+    csv.write_text("\n".join(lines) + "\n")
+
+    result = load_octopus_csv(csv)
+    assert result.warnings == []
+    assert len(result.series.days) == 1
+    for reading in result.series.days[0].readings:
+        assert reading.current_cost_pence is None
+
+
 def test_multi_day_two_clean_days_sorted():
     result = load_octopus_csv(FIXTURES / "multi_day.csv")
     assert result.warnings == []

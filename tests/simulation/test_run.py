@@ -356,3 +356,48 @@ def test_annualized_savings_scales_by_365() -> None:
     series = ConsumptionSeries(days=[_make_day(date(2026, 4, 1), slot_kwh)])
     result = run(series, tariff, spec, policy)
     assert result.annualized_savings_pence == pytest.approx(result.total_savings_pence * 365)
+
+
+# ----------------------------- Actual-cost aggregation -----------------------------
+
+
+def test_run_aggregates_actual_current_cost_when_all_present():
+    """When every reading has current_cost_pence, run() sums them into SimResult."""
+    # Build a 48-slot day with kwh=0.1 and current_cost_pence=5.0 everywhere.
+    readings = [
+        HalfHourReading(start=start, kwh=0.1, current_cost_pence=5.0)
+        for start in _SLOT_STARTS
+    ]
+    day = DailyConsumption(date=date(2026, 4, 1), readings=readings)
+    series = ConsumptionSeries(days=[day])
+
+    tariff = _flat_tariff("flat-20", 20.0)
+    policy = DispatchPolicy(
+        charge_below_pence_per_kwh=1.0, discharge_above_pence_per_kwh=100.0
+    )
+    spec = BatterySpec(usable_capacity_kwh=2.5, initial_soc_fraction=0.5)
+    result = run(series, tariff, spec, policy)
+
+    # 48 slots * 5p each = 240p
+    assert result.total_actual_current_cost_pence == pytest.approx(240.0)
+
+
+def test_run_returns_none_actual_cost_when_any_slot_missing():
+    """A single missing current_cost_pence poisons the aggregate to None."""
+    readings = [
+        HalfHourReading(start=start, kwh=0.1, current_cost_pence=5.0)
+        for start in _SLOT_STARTS
+    ]
+    # Drop cost data from slot 0.
+    readings[0] = HalfHourReading(start=_SLOT_STARTS[0], kwh=0.1, current_cost_pence=None)
+    day = DailyConsumption(date=date(2026, 4, 1), readings=readings)
+    series = ConsumptionSeries(days=[day])
+
+    tariff = _flat_tariff("flat-20", 20.0)
+    policy = DispatchPolicy(
+        charge_below_pence_per_kwh=1.0, discharge_above_pence_per_kwh=100.0
+    )
+    spec = BatterySpec(usable_capacity_kwh=2.5, initial_soc_fraction=0.5)
+    result = run(series, tariff, spec, policy)
+
+    assert result.total_actual_current_cost_pence is None

@@ -22,6 +22,7 @@ from windfall_tco.data_models import (
 
 _CONSUMPTION_COL = "Consumption (kwh)"
 _START_COL = "Start"
+_COST_COL = "Estimated Cost Inc. Tax (p)"  # optional — user's current-tariff cost
 _LOCAL_TZ = "Europe/London"
 _SLOTS_PER_DAY = 48
 
@@ -83,11 +84,25 @@ def load_octopus_csv(source: Path | str | bytes | IO) -> LoadResult:
     start_local = start_utc.dt.tz_convert(_LOCAL_TZ)
 
     # Build a working frame of local date / time / kwh, sorted for determinism.
+    # The cost column is optional — newer Octopus exports include it, manual-style
+    # CSVs may not. When present we populate HalfHourReading.current_cost_pence
+    # so downstream code can report the user's actual current-tariff cost.
+    cost_series: pd.Series | None
+    if _COST_COL in df.columns:
+        cost_series = pd.to_numeric(df[_COST_COL], errors="coerce")
+        if cost_series.isna().any():
+            # Non-numeric cost values: treat as "no cost data" rather than hard-failing,
+            # since the consumption data is still usable for simulation.
+            cost_series = None
+    else:
+        cost_series = None
+
     work = pd.DataFrame(
         {
             "date": start_local.dt.date,
             "time": start_local.dt.time,
             "kwh": pd.to_numeric(df[_CONSUMPTION_COL], errors="coerce"),
+            "cost_p": cost_series if cost_series is not None else [None] * len(df),
         }
     )
     if work["kwh"].isna().any():
@@ -121,9 +136,18 @@ def load_octopus_csv(source: Path | str | bytes | IO) -> LoadResult:
             continue
 
         readings = [
-            HalfHourReading(start=t, kwh=float(kwh))
-            for t, kwh in zip(
-                sorted_group["time"].tolist(), sorted_group["kwh"].tolist(), strict=True
+            HalfHourReading(
+                start=t,
+                kwh=float(kwh),
+                current_cost_pence=(
+                    float(cost) if cost is not None and not pd.isna(cost) else None
+                ),
+            )
+            for t, kwh, cost in zip(
+                sorted_group["time"].tolist(),
+                sorted_group["kwh"].tolist(),
+                sorted_group["cost_p"].tolist(),
+                strict=True,
             )
         ]
         days.append(DailyConsumption(date=local_date, readings=readings))
