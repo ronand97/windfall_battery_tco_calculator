@@ -350,6 +350,12 @@ def _init_state() -> None:
         ss["sim_result"] = None
     if "selected_day_index" not in ss:
         ss["selected_day_index"] = 0
+    # Counter bumped when we want st.data_editor to re-mount with the new
+    # `data=` argument (e.g. after the user switches tariff preset). Without
+    # rotating the widget key, the editor's internal state wins over `data=`
+    # and the UI appears "stuck" on the previous preset's bands.
+    if "tariff_editor_seq" not in ss:
+        ss["tariff_editor_seq"] = 0
 
 
 # ---------------------------------------------------------------------------
@@ -370,6 +376,55 @@ def main() -> None:  # noqa: C901 — UI orchestration is linear but necessarily
     st.caption(
         "Savings and simple payback for a home battery on a static time-of-use tariff."
     )
+
+    # ---- Main: tariff editor ----
+    #
+    # IMPORTANT: this block runs BEFORE the sidebar so that `ss["current_tariff"]`
+    # is up-to-date by the time the sidebar's threshold sliders read it. If the
+    # sidebar rendered first, every tariff edit would only take effect on the
+    # *next* Streamlit rerun — causing the infamous "I have to change it twice"
+    # UX bug.
+    st.subheader("Tariff")
+    col_preset, _ = st.columns([1, 3])
+    with col_preset:
+        new_preset = st.selectbox(
+            "Tariff preset",
+            PRESET_LABELS,
+            index=PRESET_LABELS.index(ss["preset_label"]),
+        )
+    if new_preset != ss["preset_label"]:
+        ss["preset_label"] = new_preset
+        ss["tariff_df"] = _tariff_to_df(_PRESET_BY_LABEL[new_preset])
+        # Bump the editor key so st.data_editor re-mounts with the new `data=`
+        # rather than holding onto the previous preset's internal widget state.
+        ss["tariff_editor_seq"] += 1
+
+    tariff_df_edited = st.data_editor(
+        ss["tariff_df"],
+        key=f"tariff_editor_{ss['tariff_editor_seq']}",
+        num_rows="dynamic",
+        hide_index=True,
+        column_config={
+            "start": st.column_config.TextColumn("start (HH:MM)"),
+            "end": st.column_config.TextColumn("end (HH:MM, use 24:00 for end-of-day)"),
+            "rate_pence_per_kwh": st.column_config.NumberColumn(
+                "rate (p/kWh)", min_value=0.0, step=0.01, format="%.2f"
+            ),
+        },
+        use_container_width=True,
+    )
+    ss["tariff_df"] = tariff_df_edited
+
+    tariff_error: str | None = None
+    try:
+        current_tariff = _df_to_tariff(tariff_df_edited, ss["preset_label"])
+        ss["current_tariff"] = current_tariff
+    except (ValueError, TypeError) as exc:
+        tariff_error = str(exc)
+        current_tariff = ss["current_tariff"]  # keep the last-good tariff in state
+
+    if tariff_error:
+        st.error(f"Tariff invalid: {tariff_error}")
 
     # ---- Sidebar: data source + sim form ----
     with st.sidebar:
@@ -427,7 +482,8 @@ def main() -> None:  # noqa: C901 — UI orchestration is linear but necessarily
 
         # Thresholds recompute each render from the current tariff because users
         # routinely edit bands mid-session and stale defaults would mislead.
-        current_tariff: Tariff = ss["current_tariff"]
+        # Safe now that the tariff editor has already run and `current_tariff`
+        # reflects the latest edit.
         cheapest, most_expensive = _band_rate_bounds(current_tariff)
         max_slider = max(most_expensive * 1.5, most_expensive + 1.0, 1.0)
 
@@ -450,19 +506,27 @@ def main() -> None:  # noqa: C901 — UI orchestration is linear but necessarily
             )
 
             st.subheader("Dispatch thresholds")
-            charge_below = st.slider(
+            # Threshold widget keys include the preset sequence so that switching
+            # presets re-initialises the defaults from the new tariff's cheapest/
+            # most-expensive bands. Editing bands within a preset keeps the user's
+            # existing overrides.
+            charge_below = st.number_input(
                 "Charge below (p/kWh)",
+                key=f"charge_below_{ss['tariff_editor_seq']}",
                 min_value=0.0,
                 max_value=float(max_slider),
                 value=float(cheapest),
-                step=0.5,
+                step=0.01,
+                format="%.2f",
             )
-            discharge_above = st.slider(
+            discharge_above = st.number_input(
                 "Discharge above (p/kWh)",
+                key=f"discharge_above_{ss['tariff_editor_seq']}",
                 min_value=0.0,
                 max_value=float(max_slider),
                 value=float(most_expensive),
-                step=0.5,
+                step=0.01,
+                format="%.2f",
             )
 
             st.subheader("Payback")
@@ -471,46 +535,6 @@ def main() -> None:  # noqa: C901 — UI orchestration is linear but necessarily
             )
 
             submitted = st.form_submit_button("Run simulation", type="primary")
-
-    # ---- Main: tariff editor ----
-    st.subheader("Tariff")
-    col_preset, _ = st.columns([1, 3])
-    with col_preset:
-        new_preset = st.selectbox(
-            "Tariff preset",
-            PRESET_LABELS,
-            index=PRESET_LABELS.index(ss["preset_label"]),
-        )
-    if new_preset != ss["preset_label"]:
-        ss["preset_label"] = new_preset
-        ss["tariff_df"] = _tariff_to_df(_PRESET_BY_LABEL[new_preset])
-
-    tariff_df_edited = st.data_editor(
-        ss["tariff_df"],
-        key="tariff_editor",
-        num_rows="dynamic",
-        hide_index=True,
-        column_config={
-            "start": st.column_config.TextColumn("start (HH:MM)"),
-            "end": st.column_config.TextColumn("end (HH:MM, use 24:00 for end-of-day)"),
-            "rate_pence_per_kwh": st.column_config.NumberColumn(
-                "rate (p/kWh)", min_value=0.0, step=0.5, format="%.2f"
-            ),
-        },
-        use_container_width=True,
-    )
-    ss["tariff_df"] = tariff_df_edited
-
-    tariff_error: str | None = None
-    try:
-        current_tariff = _df_to_tariff(tariff_df_edited, ss["preset_label"])
-        ss["current_tariff"] = current_tariff
-    except (ValueError, TypeError) as exc:
-        tariff_error = str(exc)
-        current_tariff = ss["current_tariff"]  # keep the last-good tariff in state
-
-    if tariff_error:
-        st.error(f"Tariff invalid: {tariff_error}")
 
     # ---- Resolve the current LoadResult ----
     active_load: LoadResult | None = (
