@@ -160,6 +160,19 @@ def _manual_watts_from_df(df: pd.DataFrame) -> list[float]:
     return [max(0.0, float(v)) for v in vals]
 
 
+def _savings_delta(current_gbp: float, new_gbp: float) -> str:
+    """Format a cost-vs-current delta string for ``st.metric``.
+
+    Streamlit's ``st.metric`` parses the *first character* of the delta string
+    to determine sign — a leading ``£`` would always read as positive. So the
+    sign character has to come first: ``+£50.00 vs current`` (savings, green
+    with ``delta_color="normal"``) or ``-£50.00 vs current`` (extra cost, red).
+    """
+    diff = current_gbp - new_gbp
+    sign = "+" if diff >= 0 else "-"
+    return f"{sign}£{abs(diff):,.2f} vs current"
+
+
 def _default_manual_df() -> pd.DataFrame:
     return pd.DataFrame(
         {
@@ -601,19 +614,13 @@ def main() -> None:  # noqa: C901 — UI orchestration is linear but necessarily
             actual_period_gbp = (result.total_actual_current_cost_pence or 0.0) / 100.0
             baseline_period_gbp = result.total_baseline_cost_pence / 100.0
             with_batt_period_gbp = result.total_with_battery_cost_pence / 100.0
-            tariff_switch_period_gbp = actual_period_gbp - baseline_period_gbp
-            battery_only_period_gbp = baseline_period_gbp - with_batt_period_gbp
-            total_period_gbp = actual_period_gbp - with_batt_period_gbp
 
-            # Annualized versions — scaled to 365 days for apples-to-apples
-            # year-over-year planning.
+            # Annualised versions — scaled to 365 days for apples-to-apples
+            # year-over-year planning. Only total_gbp is kept as a separate
+            # variable because the headline row outside the tabs uses it.
             actual_gbp = (summary.actual_current_annualized_cost_pence or 0.0) / 100.0
             baseline_gbp = summary.baseline_annualized_cost_pence / 100.0
             with_batt_gbp = summary.with_battery_annualized_cost_pence / 100.0
-            tariff_switch_gbp = (
-                summary.tariff_switch_annualized_savings_pence or 0.0
-            ) / 100.0
-            battery_only_gbp = summary.annualized_savings_pence / 100.0
             total_gbp = (summary.total_vs_current_annualized_savings_pence or 0.0) / 100.0
 
             # Headline: payback is inherently annual, lift it above the tabs so
@@ -635,51 +642,58 @@ def main() -> None:  # noqa: C901 — UI orchestration is linear but necessarily
                 ["Annualised (365 days)", f"Simulated period ({period_days} days)"]
             )
 
-            with tab_annual:
+            def _render_breakdown(
+                *,
+                actual: float,
+                baseline: float,
+                with_battery: float,
+                tariff_name: str,
+            ) -> None:
+                """Render the 3 cost cards + 3 savings cards for one tab.
+
+                Factored out so the annualised and per-period tabs don't
+                duplicate the same 20-line block. Uses ``delta_color="normal"``
+                throughout — positive savings (cheaper than current) show green,
+                negative (more expensive) show red, once the sign is placed
+                correctly by ``_savings_delta``.
+                """
                 st.caption("Cost comparison")
-                cc1, cc2, cc3 = st.columns(3)
-                cc1.metric("Current tariff (actual)", f"£{actual_gbp:,.2f}")
-                cc2.metric(
-                    f"{current_tariff.name} — no battery",
-                    f"£{baseline_gbp:,.2f}",
-                    delta=f"£{actual_gbp - baseline_gbp:,.2f} vs current",
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Current tariff (actual)", f"£{actual:,.2f}")
+                c2.metric(
+                    f"{tariff_name} — no battery",
+                    f"£{baseline:,.2f}",
+                    delta=_savings_delta(actual, baseline),
                     delta_color="normal",
                 )
-                cc3.metric(
-                    f"{current_tariff.name} — with battery",
-                    f"£{with_batt_gbp:,.2f}",
-                    delta=f"£{actual_gbp - with_batt_gbp:,.2f} vs current",
+                c3.metric(
+                    f"{tariff_name} — with battery",
+                    f"£{with_battery:,.2f}",
+                    delta=_savings_delta(actual, with_battery),
                     delta_color="normal",
                 )
 
                 st.caption("Savings breakdown")
                 s1, s2, s3 = st.columns(3)
-                s1.metric("Tariff switch alone", f"£{tariff_switch_gbp:,.2f}")
-                s2.metric("Battery on new tariff", f"£{battery_only_gbp:,.2f}")
-                s3.metric("Total (switch + battery)", f"£{total_gbp:,.2f}")
+                s1.metric("Tariff switch alone", f"£{actual - baseline:,.2f}")
+                s2.metric("Battery on new tariff", f"£{baseline - with_battery:,.2f}")
+                s3.metric("Total (switch + battery)", f"£{actual - with_battery:,.2f}")
+
+            with tab_annual:
+                _render_breakdown(
+                    actual=actual_gbp,
+                    baseline=baseline_gbp,
+                    with_battery=with_batt_gbp,
+                    tariff_name=current_tariff.name,
+                )
 
             with tab_period:
-                st.caption("Cost comparison")
-                pc1, pc2, pc3 = st.columns(3)
-                pc1.metric("Current tariff (actual)", f"£{actual_period_gbp:,.2f}")
-                pc2.metric(
-                    f"{current_tariff.name} — no battery",
-                    f"£{baseline_period_gbp:,.2f}",
-                    delta=f"£{actual_period_gbp - baseline_period_gbp:,.2f} vs current",
-                    delta_color="normal",
+                _render_breakdown(
+                    actual=actual_period_gbp,
+                    baseline=baseline_period_gbp,
+                    with_battery=with_batt_period_gbp,
+                    tariff_name=current_tariff.name,
                 )
-                pc3.metric(
-                    f"{current_tariff.name} — with battery",
-                    f"£{with_batt_period_gbp:,.2f}",
-                    delta=f"£{actual_period_gbp - with_batt_period_gbp:,.2f} vs current",
-                    delta_color="normal",
-                )
-
-                st.caption("Savings breakdown")
-                ps1, ps2, ps3 = st.columns(3)
-                ps1.metric("Tariff switch alone", f"£{tariff_switch_period_gbp:,.2f}")
-                ps2.metric("Battery on new tariff", f"£{battery_only_period_gbp:,.2f}")
-                ps3.metric("Total (switch + battery)", f"£{total_period_gbp:,.2f}")
 
             st.caption(
                 "*Current-tariff cost comes from the uploaded CSV's 'Estimated "
