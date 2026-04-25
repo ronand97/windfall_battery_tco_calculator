@@ -389,3 +389,43 @@ def test_property_soc_delta_matches_flow(scenario) -> None:  # type: ignore[no-u
     )
     delta = new_state.energy_stored_kwh - state.energy_stored_kwh
     assert abs(delta - (sr.battery_charge_kwh - sr.battery_discharge_kwh)) < _TOL
+
+
+# ----------------------------- decide_action -----------------------------
+
+
+def test_decide_action_discharge_at_threshold():
+    """At-threshold prices count as triggering the action (>= / <=)."""
+    from windfall_tco.simulation.step import decide_action
+
+    policy = DispatchPolicy(
+        charge_below_pence_per_kwh=10.0,
+        discharge_above_pence_per_kwh=30.0,
+    )
+    assert decide_action(30.0, policy) == "discharge"
+    assert decide_action(30.01, policy) == "discharge"
+
+
+def test_decide_action_charge_at_threshold():
+    from windfall_tco.simulation.step import decide_action
+
+    policy = DispatchPolicy(
+        charge_below_pence_per_kwh=10.0,
+        discharge_above_pence_per_kwh=30.0,
+    )
+    assert decide_action(10.0, policy) == "charge"
+    assert decide_action(9.99, policy) == "charge"
+
+
+def test_decide_action_idle_between_thresholds():
+    from windfall_tco.simulation.step import decide_action
+
+    policy = DispatchPolicy(
+        charge_below_pence_per_kwh=10.0,
+        discharge_above_pence_per_kwh=30.0,
+    )
+    assert decide_action(15.0, policy) == "idle"
+    assert decide_action(20.0, policy) == "idle"
+    # Just inside both thresholds.
+    assert decide_action(10.01, policy) == "idle"
+    assert decide_action(29.99, policy) == "idle"
