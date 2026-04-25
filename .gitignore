@@ -64,3 +64,6 @@ Thumbs.db
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Local-only design / planning notes
+docs/

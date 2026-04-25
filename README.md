@@ -134,10 +134,6 @@ src/windfall_tco/
 
 app/streamlit_app.py         # the UI
 tests/                       # pytest, mirrors src/ layout
-
-docs/superpowers/
-  specs/                     # design spec
-  plans/                     # implementation plan
 ```
 
 ## Development
@@ -152,8 +148,3 @@ uv run pytest --cov
 # lint
 uv run ruff check src tests app
 ```
-
-## Design and implementation docs
-
-- **Spec:** `docs/superpowers/specs/2026-04-22-home-battery-tco-design.md` — scope, data models, simulation algorithm, dispatch rules, UI layout.
-- **Plan:** `docs/superpowers/plans/2026-04-23-home-battery-tco-calculator.md` — the step-by-step TDD plan that produced the initial implementation.
